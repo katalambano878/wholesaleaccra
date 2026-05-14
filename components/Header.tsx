@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import MiniCart from './MiniCart';
 import { useCart } from '@/context/CartContext';
 import { supabase } from '@/lib/supabase';
@@ -22,7 +22,6 @@ type HeaderCategory = {
 
 export default function Header() {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -61,19 +60,9 @@ export default function Header() {
   ];
 
   const isActive = (href: string) => {
-    const [path, queryString] = href.split('?');
+    const path = href.split('?')[0];
     if (path === '/') return pathname === '/';
-    if (pathname !== path) return false;
-
-    if (queryString) {
-      const linkParams = new URLSearchParams(queryString);
-      for (const [k, v] of linkParams.entries()) {
-        if (searchParams?.get(k) !== v) return false;
-      }
-      return true;
-    }
-
-    return true;
+    return pathname === path;
   };
 
   useEffect(() => {
