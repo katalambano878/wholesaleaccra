@@ -1,5 +1,5 @@
 'use client';
-import { money } from '@/lib/format-money';
+import { money, asNumber } from '@/lib/format-money';
 
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
