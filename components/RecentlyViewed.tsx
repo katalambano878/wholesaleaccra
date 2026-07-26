@@ -1,4 +1,5 @@
 'use client';
+import { money } from '@/lib/format-money';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
@@ -62,11 +63,11 @@ export default function RecentlyViewed() {
                 </h3>
                 <div className="flex items-center space-x-2">
                   <span className="text-lg font-bold text-gray-900">
-                    GH₵{product.price.toFixed(2)}
+                    GH₵{money(product.price)}
                   </span>
                   {product.originalPrice && (
                     <span className="text-sm text-gray-400 line-through">
-                      GH₵{product.originalPrice.toFixed(2)}
+                      GH₵{money(product.originalPrice)}
                     </span>
                   )}
                 </div>

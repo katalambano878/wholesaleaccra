@@ -1,4 +1,5 @@
 'use client';
+import { money } from '@/lib/format-money';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
@@ -94,12 +95,6 @@ export default function InventoryManagementPage() {
     }
   };
 
-  const handleBulkRestock = () => {
-    // Placeholder for bulk restock logic
-    alert("Bulk restock feature coming soon (requires backend logic).");
-    setSelectedProducts([]);
-  };
-
   const handleExportCSV = () => {
     const csvData = [
       ['SKU', 'Product Name', 'Category', 'Current Stock', 'Price', 'Status'],
@@ -108,7 +103,7 @@ export default function InventoryManagementPage() {
         p.name,
         p.category,
         p.currentStock.toString(),
-        p.price.toFixed(2),
+        money(p.price),
         p.status
       ])
     ];
@@ -248,12 +243,6 @@ export default function InventoryManagementPage() {
               </p>
               <div className="flex items-center space-x-3">
                 <button
-                  onClick={handleBulkRestock}
-                  className="bg-pink-700 hover:bg-purple-800 text-white px-4 py-2 rounded-lg font-semibold transition-colors whitespace-nowrap cursor-pointer"
-                >
-                  Bulk Restock
-                </button>
-                <button
                   onClick={() => setSelectedProducts([])}
                   className="text-gray-600 hover:text-gray-900 font-medium whitespace-nowrap cursor-pointer"
                 >
@@ -315,7 +304,7 @@ export default function InventoryManagementPage() {
                       </td>
                       <td className="px-6 py-4">
                         <span className="font-semibold text-gray-900">
-                          GH₵{(product.currentStock * product.price).toFixed(2)}
+                          GH₵{money(product.currentStock * product.price)}
                         </span>
                       </td>
                       <td className="px-6 py-4">

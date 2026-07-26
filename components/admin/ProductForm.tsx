@@ -1,4 +1,5 @@
 'use client';
+import { money } from '@/lib/format-money';
 
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
@@ -600,7 +601,7 @@ export default function ProductForm({ initialData, isEditMode = false }: Product
                                 <p className="text-purple-900 font-semibold mb-1">Discount Calculation</p>
                                 {price && comparePrice && parseFloat(comparePrice) > parseFloat(price) ? (
                                     <p className="text-purple-800">
-                                        Savings: GH₵ {(parseFloat(comparePrice) - parseFloat(price)).toFixed(2)}
+                                        Savings: GH₵ {money(parseFloat(comparePrice) - parseFloat(price))}
                                         <span className="ml-2">
                                             ({(((parseFloat(comparePrice) - parseFloat(price)) / parseFloat(comparePrice)) * 100).toFixed(0)}% off)
                                         </span>
@@ -658,7 +659,7 @@ export default function ProductForm({ initialData, isEditMode = false }: Product
                                     <div className="mt-4 p-3 bg-purple-50 border border-purple-200 rounded-lg text-sm">
                                         <p className="text-purple-900">
                                             <span className="font-semibold">Wholesale savings:</span>{' '}
-                                            GH₵ {(parseFloat(price) - parseFloat(wholesalePrice)).toFixed(2)} / unit
+                                            GH₵ {money(parseFloat(price) - parseFloat(wholesalePrice))} / unit
                                             <span className="ml-2 text-purple-700">
                                                 ({(((parseFloat(price) - parseFloat(wholesalePrice)) / parseFloat(price)) * 100).toFixed(0)}% off retail)
                                             </span>

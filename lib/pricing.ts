@@ -1,3 +1,5 @@
+import { money, asNumber } from '@/lib/format-money';
+
 /**
  * Retail vs. wholesale pricing logic.
  *
@@ -115,4 +117,4 @@ export function mergeTierInput(
 }
 
 /** Convenience: format a GHS price with two decimals. */
-export const formatGHS = (val: number): string => `GH\u20B5${(Number(val) || 0).toFixed(2)}`;
+export const formatGHS = (val: number): string => `GH\u20B5${money(asNumber(val))}`;

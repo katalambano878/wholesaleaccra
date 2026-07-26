@@ -1,4 +1,5 @@
 'use client';
+import { money } from '@/lib/format-money';
 
 import Link from 'next/link';
 import { useState, useEffect, useCallback } from 'react';
@@ -360,7 +361,7 @@ export default function ProductsPage() {
                     </td>
                     <td className="py-4 px-4 text-gray-700 text-sm font-mono">{product.sku || '-'}</td>
                     <td className="py-4 px-4 text-gray-700 text-sm">{product.category}</td>
-                    <td className="py-4 px-4 font-semibold text-gray-900 whitespace-nowrap">GH₵ {product.price.toFixed(2)}</td>
+                    <td className="py-4 px-4 font-semibold text-gray-900 whitespace-nowrap">GH₵ {money(product.price)}</td>
                     <td className="py-4 px-4 text-gray-700">
                       {product.stock}
                       {product.stock <= (product.metadata?.low_stock_threshold || 5) && product.stock > 0 && (
