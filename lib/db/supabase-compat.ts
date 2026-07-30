@@ -26,6 +26,16 @@
 import { getPool } from "./pool";
 import { FK_MAP, JSONB_COLUMNS, type FkEdge } from "./fk-map";
 import { createStorageClient, type StorageClient } from "./storage";
+import { withJwtContext, type JwtDbContext } from "./jwt-context";
+
+export type CompatClientOptions = {
+  /** Pretend to be service_role for SECURITY DEFINER RPC guards. */
+  serviceRole?: boolean;
+  /** Authenticated user id (maps to request.jwt.claim.sub / auth.uid()). */
+  userId?: string | null;
+  /** JWT role claim (authenticated | anon | service_role | admin | staff). */
+  role?: string | null;
+};
 
 type Row = Record<string, any>;
 type Op = "eq" | "neq" | "gt" | "gte" | "lt" | "lte" | "like" | "ilike" | "is" | "in";
@@ -403,9 +413,9 @@ class QueryBuilder implements PromiseLike<{ data: any; error: any; count: number
         });
         clauses.push(`(${ident(f.col!)} IS NULL OR ${ident(f.col!)} NOT IN (${ph.join(",")}))`);
       } else if (f.kind === "is") {
-        clauses.push(this.isClause(f.col!, f.value));
+        clauses.push(this.isClause(f.col!, f.value, params));
       } else if (f.kind === "notIs") {
-        const inner = this.isClause(f.col!, f.value);
+        const inner = this.isClause(f.col!, f.value, params);
         clauses.push(`NOT (${inner})`);
       } else if (f.kind === "or") {
         clauses.push(this.orClause(f.orParts!, params));
@@ -414,11 +424,16 @@ class QueryBuilder implements PromiseLike<{ data: any; error: any; count: number
     return clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   }
 
-  private isClause(col: string, value: any): string {
+  private isClause(col: string, value: any, params?: any[]): string {
     if (value === null || value === "null") return `${ident(col)} IS NULL`;
     if (value === true || value === "true") return `${ident(col)} IS TRUE`;
     if (value === false || value === "false") return `${ident(col)} IS FALSE`;
-    return `${ident(col)} IS NOT DISTINCT FROM ${value}`;
+    // Parameterize unexpected values — never interpolate into SQL.
+    if (params) {
+      params.push(value);
+      return `${ident(col)} IS NOT DISTINCT FROM $${params.length}`;
+    }
+    return `${ident(col)} IS NULL`;
   }
 
   private cmpClause(col: string, op: string, value: any, params: any[]): string {
@@ -486,7 +501,7 @@ class QueryBuilder implements PromiseLike<{ data: any; error: any; count: number
     const op = rest.slice(0, second).trim();
     const val = rest.slice(second + 1).trim();
     if (op === "is") {
-      return this.isClause(col, val);
+      return this.isClause(col, val, params);
     }
     const sqlOp: Record<string, string> = {
       eq: "=", neq: "<>", gt: ">", gte: ">=", lt: "<", lte: "<=", like: "LIKE", ilike: "ILIKE",
@@ -813,14 +828,14 @@ function normalizeValue(v: any, table?: string, column?: string): any {
 
 async function callRpc(
   fn: string,
-  args: Record<string, any> = {}
+  args: Record<string, any> = {},
+  jwt?: JwtDbContext
 ): Promise<{ data: any; error: any }> {
   if (!PG_IDENT.test(fn)) {
     return { data: null, error: { message: `Unsafe function name: ${fn}` } };
   }
   try {
     const keys = Object.keys(args);
-    const pool = getPool();
     let sql: string;
     let params: any[];
     if (keys.length === 0) {
@@ -839,7 +854,12 @@ async function callRpc(
       }
       sql = `SELECT public.${ident(fn)}(${parts.join(", ")}) AS result`;
     }
-    const res = await pool.query(sql, params);
+
+    // Always run RPCs inside a transaction with JWT GUCs so SECURITY DEFINER
+    // guards (mark_order_paid, is_admin_or_staff) see a real caller.
+    const res = await withJwtContext(jwt || {}, async (client) => {
+      return client.query(sql, params);
+    });
     return { data: res.rows[0]?.result ?? null, error: null };
   } catch (e: any) {
     return { data: null, error: { message: e.message || String(e) } };
@@ -947,7 +967,25 @@ export interface SupabaseCompatClient {
   rpc(fn: string, args?: Record<string, any>): Promise<{ data: any; error: any }>;
 }
 
-export function createClient(_url?: string, _key?: string): SupabaseCompatClient {
+function resolveJwtContext(
+  key?: string,
+  opts?: CompatClientOptions
+): JwtDbContext {
+  if (opts?.serviceRole || key === "service_role") {
+    return { role: "service_role", sub: opts?.userId || null };
+  }
+  return {
+    role: opts?.role || (key ? "authenticated" : "anon"),
+    sub: opts?.userId || null,
+  };
+}
+
+export function createClient(
+  _url?: string,
+  _key?: string,
+  opts?: CompatClientOptions
+): SupabaseCompatClient {
+  const jwt = resolveJwtContext(_key, opts);
   return {
     from(table: string) {
       if (!PG_IDENT.test(table)) throw new Error(`Unsafe table name: ${table}`);
@@ -955,7 +993,7 @@ export function createClient(_url?: string, _key?: string): SupabaseCompatClient
     },
     storage: createStorageClient(),
     auth: createAuthApi(),
-    rpc: callRpc,
+    rpc: (fn, args) => callRpc(fn, args, jwt),
   };
 }
 

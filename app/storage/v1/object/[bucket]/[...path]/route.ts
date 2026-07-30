@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createStorageClient } from "@/lib/db/storage";
 import { isPlainPostgres } from "@/lib/db/mode";
+import { resolveRestCaller } from "@/lib/db/rest-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -9,6 +10,8 @@ export const runtime = "nodejs";
  * Supabase Storage upload:
  *   POST /storage/v1/object/{bucket}/{path}
  *   body = raw file bytes
+ *
+ * Mutations require an authenticated (or service-role) caller.
  */
 export async function POST(
   req: NextRequest,
@@ -16,6 +19,11 @@ export async function POST(
 ) {
   if (!isPlainPostgres()) {
     return NextResponse.json({ error: "DATABASE_URL not set" }, { status: 503 });
+  }
+
+  const caller = await resolveRestCaller(req);
+  if (!caller.isAuthenticated && caller.role !== "service_role") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { bucket, path } = await ctx.params;
@@ -51,6 +59,12 @@ export async function DELETE(
   if (!isPlainPostgres()) {
     return NextResponse.json({ error: "DATABASE_URL not set" }, { status: 503 });
   }
+
+  const caller = await resolveRestCaller(req);
+  if (!caller.isAdmin && caller.role !== "service_role") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { bucket, path } = await ctx.params;
   const objectPath = path.map(decodeURIComponent).join("/");
   const storage = createStorageClient();

@@ -116,6 +116,17 @@ export function createStorageClient(): StorageClient {
           try {
             const full = safeJoin(bucket, objectPath);
             await fs.mkdir(path.dirname(full), { recursive: true });
+            if (!opts?.upsert) {
+              try {
+                await fs.access(full);
+                return {
+                  data: null,
+                  error: { message: "The resource already exists" },
+                };
+              } catch {
+                /* file does not exist — ok to create */
+              }
+            }
             let buf: Buffer;
             if (data instanceof Buffer) buf = data;
             else if (data instanceof Uint8Array) buf = Buffer.from(data);

@@ -126,10 +126,13 @@ function OrderSuccessContent() {
   const orderDate = new Date(order.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const estimatedDelivery = new Date(new Date(order.created_at).getTime() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   const pointsEarned = Math.floor(order.total / 10); // Example logic: 1 point per 10 currency units
+  const isPaid = order.payment_status === 'paid';
+  const isFailed = order.payment_status === 'failed';
+  const isPending = !isPaid && !isFailed;
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-pink-50 via-white to-pink-50">
-      {showConfetti && (
+      {showConfetti && isPaid && (
         <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
           {[...Array(50)].map((_, i) => (
             <div
@@ -151,14 +154,52 @@ function OrderSuccessContent() {
       <section className="py-16">
         <div className="max-w-4xl mx-auto px-4 sm:px-6">
           <div className="bg-white rounded-2xl shadow-xl p-8 md:p-12 text-center mb-8">
-            <div className="w-24 h-24 flex items-center justify-center mx-auto mb-6 bg-pink-100 rounded-full">
-              <i className="ri-checkbox-circle-fill text-6xl text-pink-600"></i>
+            <div className={`w-24 h-24 flex items-center justify-center mx-auto mb-6 rounded-full ${isPaid ? 'bg-pink-100' : isFailed ? 'bg-red-100' : 'bg-amber-100'}`}>
+              {verifying ? (
+                <i className="ri-loader-4-line text-6xl text-amber-600 animate-spin"></i>
+              ) : isPaid ? (
+                <i className="ri-checkbox-circle-fill text-6xl text-pink-600"></i>
+              ) : isFailed ? (
+                <i className="ri-close-circle-fill text-6xl text-red-600"></i>
+              ) : (
+                <i className="ri-time-line text-6xl text-amber-600"></i>
+              )}
             </div>
 
-            <h1 className="text-4xl font-bold text-gray-900 mb-4">Order Confirmed!</h1>
+            <h1 className="text-4xl font-bold text-gray-900 mb-4">
+              {verifying
+                ? 'Confirming Payment…'
+                : isPaid
+                  ? 'Order Confirmed!'
+                  : isFailed
+                    ? 'Payment Not Completed'
+                    : 'Awaiting Payment Confirmation'}
+            </h1>
             <p className="text-xl text-gray-600 mb-8">
-              Thank you for your purchase. We're processing your order now.
+              {verifying
+                ? 'Please wait while we confirm your payment with the provider.'
+                : isPaid
+                  ? "Thank you for your purchase. We're processing your order now."
+                  : isFailed
+                    ? 'Your payment was not successful. You can retry from the payment page.'
+                    : 'Your order is saved. Payment confirmation can take a moment — this page will update automatically.'}
             </p>
+            {isPending && !verifying && (
+              <Link
+                href={`/pay/${order.id}`}
+                className="inline-flex items-center justify-center bg-pink-700 hover:bg-purple-800 text-white px-8 py-3 rounded-lg font-semibold mb-8"
+              >
+                Complete Payment
+              </Link>
+            )}
+            {isFailed && (
+              <Link
+                href={`/pay/${order.id}`}
+                className="inline-flex items-center justify-center bg-pink-700 hover:bg-purple-800 text-white px-8 py-3 rounded-lg font-semibold mb-8"
+              >
+                Retry Payment
+              </Link>
+            )}
 
             <div className="bg-pink-50 rounded-xl p-6 mb-8">
               <div className="grid md:grid-cols-3 gap-6 text-center">
@@ -255,9 +296,14 @@ function OrderSuccessContent() {
                 </div>
 
                 <div className="flex justify-between text-xl font-bold text-gray-900 border-t border-gray-200 pt-2">
-                  <span>Total Paid</span>
+                  <span>{isPaid ? 'Total Paid' : 'Order Total'}</span>
                   <span>GH₵{money(order.total)}</span>
                 </div>
+                {!isPaid && (
+                  <p className="text-sm text-amber-700 mt-2 text-right">
+                    Payment status: {order.payment_status || 'pending'}
+                  </p>
+                )}
               </div>
             </div>
 

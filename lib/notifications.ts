@@ -1,5 +1,5 @@
 import { Resend } from 'resend';
-import { supabase } from '@/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase-admin';
 import { escapeHtml } from '@/lib/sanitize';
 import {
     getSiteName,
@@ -161,6 +161,8 @@ export async function sendSMS({ to, message }: { to: string; message: string }) 
     }
 
     const recipient = formatPhoneNumber(to);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
 
     try {
         console.log(`[SMS] Sending to ${maskPhone(recipient)}`);
@@ -179,7 +181,8 @@ export async function sendSMS({ to, message }: { to: string; message: string }) 
                         message: message
                     }
                 ]
-            })
+            }),
+            signal: controller.signal,
         });
 
         const contentType = response.headers.get('content-type') || '';
@@ -191,18 +194,45 @@ export async function sendSMS({ to, message }: { to: string; message: string }) 
 
         const result = await response.json();
         console.log('[SMS] Result:', result.status === 1 ? 'Success' : 'Failed', '| Code:', result.code);
-        if (result.status !== 1) {
-            console.log('[SMS] Full Response:', JSON.stringify(result, null, 2));
-        }
         return result;
     } catch (error: any) {
-        console.error('[SMS] Error:', error.message);
+        console.error('[SMS] Error:', error?.name === 'AbortError' ? 'timeout' : error.message);
         return null;
+    } finally {
+        clearTimeout(timer);
     }
 }
 
 export async function sendOrderConfirmation(order: any) {
     const { id, email, phone: orderPhone, shipping_address, total, created_at, order_number, metadata } = order;
+
+    // Idempotency: claim the confirmation slot in metadata before sending.
+    if (id) {
+        const { data: current } = await supabaseAdmin
+            .from('orders')
+            .select('metadata')
+            .eq('id', id)
+            .maybeSingle();
+
+        if (current?.metadata?.confirmation_sent_at) {
+            console.log(`[Notification] Skipping duplicate confirmation for #${order_number || id}`);
+            return;
+        }
+
+        const prevMeta = (current?.metadata && typeof current.metadata === 'object')
+            ? current.metadata
+            : (metadata && typeof metadata === 'object' ? metadata : {});
+        const sentAt = new Date().toISOString();
+        const { error: claimError } = await supabaseAdmin
+            .from('orders')
+            .update({
+                metadata: { ...prevMeta, confirmation_sent_at: sentAt },
+            })
+            .eq('id', id);
+        if (claimError) {
+            console.warn('[Notification] Could not claim confirmation slot:', claimError.message);
+        }
+    }
 
     const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
 
@@ -237,7 +267,7 @@ export async function sendOrderConfirmation(order: any) {
     // Fetch order items to get preorder_shipping info
     let shippingNotes: string[] = [];
     try {
-        const { data: items } = await supabase
+        const { data: items } = await supabaseAdmin
             .from('order_items')
             .select('product_name, metadata')
             .eq('order_id', id);

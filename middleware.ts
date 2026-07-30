@@ -5,7 +5,10 @@ import { jwtVerify } from 'jose';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const usePlainPg = process.env.NEXT_PUBLIC_USE_PLAIN_PG === 'true';
+// Align with DATABASE_URL cutover: plain PG middleware when either flag is set.
+const usePlainPg =
+  process.env.NEXT_PUBLIC_USE_PLAIN_PG === 'true' ||
+  !!(process.env.DATABASE_URL || process.env.POSTGRES_URL);
 
 function extractToken(request: NextRequest): string | undefined {
   let token = request.cookies.get('sb-access-token')?.value;
@@ -41,10 +44,12 @@ function extractToken(request: NextRequest): string | undefined {
 }
 
 async function verifyPlainPgAdmin(token: string): Promise<{ ok: boolean; userId?: string; role?: string }> {
+  // Must match lib/db/mode.ts authJwtSecret() so minted tokens verify here.
   const secret =
     process.env.AUTH_JWT_SECRET ||
     process.env.JWT_SECRET ||
-    process.env.SUPABASE_JWT_SECRET;
+    process.env.SUPABASE_JWT_SECRET ||
+    (process.env.NODE_ENV !== 'production' ? 'dev-auth-secret-change-me' : undefined);
   if (!secret) return { ok: false };
 
   try {
@@ -132,7 +137,16 @@ export async function middleware(request: NextRequest) {
         response.headers.set('x-user-role', profile.role);
       } catch (err) {
         console.error('[Middleware] Auth check error:', err);
+        const loginUrl = new URL('/admin/login', request.url);
+        loginUrl.searchParams.set('redirect', pathname);
+        loginUrl.searchParams.set('error', 'session_expired');
+        return NextResponse.redirect(loginUrl);
       }
+    } else {
+      // Fail closed: no service key and not plain-PG → deny admin.
+      const loginUrl = new URL('/admin/login', request.url);
+      loginUrl.searchParams.set('error', 'unauthorized');
+      return NextResponse.redirect(loginUrl);
     }
   }
 

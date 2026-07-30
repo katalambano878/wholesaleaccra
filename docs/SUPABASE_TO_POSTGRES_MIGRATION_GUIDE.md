@@ -5,19 +5,19 @@
 **Branch:** `staging/plain-postgres`  
 **Coolify staging:** `wholesaleaccra-staging` (`ndhhxnl8rpa5ggk6eimdd3b3`)  
 **Staging URL:** https://wholesaleaccra-staging.169-58-8-203.sslip.io  
-**DB:** `fleet-postgres` / `store_wholesaleaccra` (provision with `sudo fleet db provision wholesaleaccra`)
+**DB:** `fleet-postgres` / `wholesaleaccra_staging` (live staging name; fleet may also provision `store_wholesaleaccra`)
 
-See also: store hardening playbook in the big-vps workspace (`STORE_HARDENING_PLAYBOOK.md`).
+See also: store hardening playbook in the big-vps workspace (`STORE_HARDENING_PLAYBOOK.md`), plus root audit docs (`FULL_SYSTEM_AUDIT.md`, `PAYMENT_AND_CALLBACK_AUDIT.md`).
 
 ## Env cutover trio (set together in Coolify)
 
 | Variable | Value |
 |----------|--------|
-| `DATABASE_URL` | `postgresql://…@fleet-postgres:5432/store_wholesaleaccra` |
+| `DATABASE_URL` | `postgresql://…@fleet-postgres:5432/wholesaleaccra_staging` |
 | `NEXT_PUBLIC_USE_PLAIN_PG` | `true` |
 | `NEXT_PUBLIC_SUPABASE_URL` | Staging/prod app origin (not `*.supabase.co`) — e.g. staging URL above until custom domain |
 
-Also usually required: JWT secrets, `NEXT_PUBLIC_APP_URL`, `STORAGE_ROOT` / `STORAGE_PUBLIC_URL`, Resend + payment keys. **Do not commit real values.**
+Also usually required: `AUTH_JWT_SECRET`, `NEXT_PUBLIC_APP_URL`, `STORAGE_ROOT` / `STORAGE_PUBLIC_URL`, `MOOLRE_CALLBACK_SECRET`, `CRON_SECRET`, Resend + Moolre keys. **Do not commit real values.**
 
 ## Hardening notes (Jul 2026)
 
@@ -26,6 +26,8 @@ Also usually required: JWT secrets, `NEXT_PUBLIC_APP_URL`, `STORAGE_ROOT` / `STO
 - [x] Money display → `money()` / `asNumber()` on storefront + admin paths
 - [x] Cron payment reminders → `supabaseAdmin`
 - [x] Order history: Track / Reorder / Invoice / Help; hide Bulk Restock stub
+- [x] JWT GUCs for RPCs; restore `mark_order_paid` (was missing on staging)
+- [x] REST/RPC/storage auth; Moolre callback/verify hardening; shop category filter fix
 
 ## Verify
 
@@ -35,4 +37,13 @@ ssh big-vps "sudo docker ps --format '{{.Image}} {{.Status}}' | grep ndhhxnl8"
 curl -s "$BASE/service-worker.js" | head -n 3
 curl -s -o /dev/null -w "%{http_code}\n" "$BASE/"
 curl -s -o /dev/null -w "%{http_code}\n" "$BASE/shop"
+```
+
+## SQL to apply on new environments
+
+```bash
+# From repo root, pipe migrations to the target DB:
+# 20260730000000_plain_pg_auth_uid_helpers.sql
+# 20260730000001_restore_mark_order_paid.sql
+# 20260730000002_fix_mark_order_paid_text_status.sql
 ```

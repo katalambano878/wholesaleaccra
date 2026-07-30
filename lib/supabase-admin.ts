@@ -12,7 +12,8 @@ import { createClient as createPgClient } from './db/supabase-compat';
 
 function createAdminClient() {
   if (isPlainPostgres()) {
-    return createPgClient();
+    // service_role JWT GUCs so mark_order_paid / update_customer_stats succeed
+    return createPgClient(undefined, "service_role", { serviceRole: true });
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;

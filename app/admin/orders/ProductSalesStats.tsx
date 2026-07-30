@@ -46,33 +46,54 @@ export default function ProductSalesStats({ isOpen, onClose }: { isOpen: boolean
         // 'all' leaves startDate as null
 
         try {
-            // We fetch order_items and filter by the parent order's created_at
-            let query = supabase
-                .from('order_items')
-                .select(`
+            // Plain-PG compat does not support dotted embed filters
+            // (orders.payment_status). Resolve paid order IDs first.
+            let ordersQuery = supabase
+                .from('orders')
+                .select('id')
+                .eq('payment_status', 'paid')
+                .neq('status', 'cancelled');
+
+            if (startDate) {
+                ordersQuery = ordersQuery.gte('created_at', startDate);
+            }
+
+            const { data: paidOrders, error: ordersError } = await ordersQuery;
+            if (ordersError) throw ordersError;
+
+            const orderIds = (paidOrders || []).map((o: { id: string }) => o.id);
+            if (orderIds.length === 0) {
+                setStats([]);
+                setLoading(false);
+                return;
+            }
+
+            // Chunk IN filters to avoid oversized URLs.
+            const chunkSize = 100;
+            const data: any[] = [];
+            for (let i = 0; i < orderIds.length; i += chunkSize) {
+                const chunk = orderIds.slice(i, i + chunkSize);
+                const { data: items, error } = await supabase
+                    .from('order_items')
+                    .select(`
           quantity,
           product_name,
           product_id,
           variant_name,
           total_price,
-          orders!inner (
+          order_id,
+          orders (
             id,
             created_at,
             status,
             payment_status
           )
-        `);
+        `)
+                    .in('order_id', chunk);
 
-            // Only include paid orders (confirmed) and exclude cancelled
-            query = query.eq('orders.payment_status', 'paid').neq('orders.status', 'cancelled');
-
-            if (startDate) {
-                query = query.gte('orders.created_at', startDate);
+                if (error) throw error;
+                if (items) data.push(...items);
             }
-
-            const { data, error } = await query;
-
-            if (error) throw error;
 
             if (data) {
                 const map = new Map<string, SalesStat>();

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/db/supabase-compat";
 import { isPlainPostgres } from "@/lib/db/mode";
+import {
+  resolveRestCaller,
+  clientForCaller,
+  canCallRpc,
+} from "@/lib/db/rest-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -30,8 +34,16 @@ export async function POST(
     return NextResponse.json({ message: "Invalid function name" }, { status: 400 });
   }
 
+  const caller = await resolveRestCaller(req);
+  if (!canCallRpc(caller, fn)) {
+    return NextResponse.json(
+      { message: "Insufficient privileges to call this function", code: "42501" },
+      { status: 401 }
+    );
+  }
+
   const args = (await req.json().catch(() => ({}))) as Record<string, any>;
-  const client = createClient();
+  const client = clientForCaller(caller);
   const { data, error } = await client.rpc(fn, args);
   if (error) {
     return NextResponse.json(

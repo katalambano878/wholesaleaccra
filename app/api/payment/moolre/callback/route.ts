@@ -4,15 +4,13 @@ import { sendOrderConfirmation } from '@/lib/notifications';
 import { checkRateLimit, getClientIdentifier, RATE_LIMITS } from '@/lib/rate-limit';
 
 /**
- * Moolre callback: JSON body with status, code, message, data (payer phone, amount, externalref, etc.), secret, ts.
- * Field names and shapes follow the provider’s documentation.
+ * Moolre callback: JSON body with status, code, message, data, secret, ts.
  */
 
 export async function POST(req: Request) {
     console.log('[Callback] POST received at', new Date().toISOString());
 
     try {
-        // Rate limiting
         const clientId = getClientIdentifier(req);
         const rateLimitResult = checkRateLimit(`callback:${clientId}`, RATE_LIMITS.callback);
 
@@ -24,7 +22,6 @@ export async function POST(req: Request) {
         let body: any = {};
         const contentType = req.headers.get('content-type') || '';
 
-        // Parse body
         try {
             if (contentType.includes('application/json')) {
                 body = await req.json();
@@ -43,35 +40,35 @@ export async function POST(req: Request) {
                     }
                 }
             }
-        } catch (parseError) {
+        } catch {
             console.error('[Callback] Body parsing failed');
             return NextResponse.json({ success: false, message: 'Invalid Request Body' }, { status: 400 });
         }
 
         console.log('[Callback] Body keys:', Object.keys(body).join(', '));
-        console.log('[Callback] Data keys:', body.data ? Object.keys(body.data).join(', ') : 'no data object');
 
-        // ============================================================
-        // SECURITY: Verify callback secret FIRST (mandatory)
-        // ============================================================
+        // Fail closed: callback secret is mandatory outside local development.
         const expectedSecret = process.env.MOOLRE_CALLBACK_SECRET;
-        if (expectedSecret) {
-            // If we have a configured secret, the callback MUST match it
-            if (!body.secret || body.secret !== expectedSecret) {
-                console.error('[Callback] Secret mismatch or missing! Rejecting callback.');
-                return NextResponse.json({ success: false, message: 'Invalid callback signature' }, { status: 403 });
+        const allowInsecure =
+            process.env.NODE_ENV !== 'production' &&
+            process.env.ALLOW_INSECURE_MOOLRE_CALLBACK === 'true';
+
+        if (!expectedSecret) {
+            if (!allowInsecure) {
+                console.error('[Callback] MOOLRE_CALLBACK_SECRET not configured — rejecting');
+                return NextResponse.json(
+                    { success: false, message: 'Callback secret not configured' },
+                    { status: 503 }
+                );
             }
-        } else {
-            // Log a warning if no secret is configured — this should be fixed
-            console.warn('[Callback] WARNING: MOOLRE_CALLBACK_SECRET not configured. Callback origin cannot be verified.');
+            console.warn('[Callback] Insecure callback allowed (dev only)');
+        } else if (!body.secret || body.secret !== expectedSecret) {
+            console.error('[Callback] Secret mismatch or missing! Rejecting callback.');
+            return NextResponse.json({ success: false, message: 'Invalid callback signature' }, { status: 403 });
         }
 
-        // ============================================================
-        // EXTRACT FIELDS - Moolre nests payment data inside body.data
-        // ============================================================
         const data = body.data || {};
 
-        // Order reference: check body.data.externalref first, then top-level fallbacks
         const rawExternalRef =
             data.externalref ||
             data.external_reference ||
@@ -80,20 +77,16 @@ export async function POST(req: Request) {
             body.orderRef ||
             body.external_reference;
 
-        // Strip retry suffix (e.g., "ORD-123-R1770000000" -> "ORD-123")
         const merchantOrderRef = rawExternalRef
-            ? rawExternalRef.replace(/-R\d+$/, '')
+            ? String(rawExternalRef).replace(/-R\d+$/, '')
             : (data.metadata?.original_order_number || body.metadata?.original_order_number);
 
-        // Moolre's transaction reference
         const moolreReference =
             data.transactionid ||
             data.thirdpartyref ||
             body.reference ||
             'callback';
 
-        // Payment status: body.status === 1 means API call succeeded,
-        // body.data.txtstatus === 1 means transaction was successful
         const apiStatus = body.status;
         const txStatus = data.txtstatus;
         const messageStr = String(body.message || '').toLowerCase();
@@ -101,35 +94,24 @@ export async function POST(req: Request) {
         console.log('[Callback] Order ref:', merchantOrderRef,
             '| API status:', apiStatus,
             '| TX status:', txStatus,
-            '| Message:', body.message,
             '| Moolre ref:', moolreReference);
 
         if (!merchantOrderRef) {
-            console.error('[Callback] Missing order reference. Body:', JSON.stringify(body).substring(0, 500));
+            console.error('[Callback] Missing order reference');
             return NextResponse.json({ success: false, message: 'Missing order reference' }, { status: 400 });
         }
 
-        // ============================================================
-        // SECURITY: Strict success validation
-        // Require BOTH api status AND transaction status to be success,
-        // OR the message explicitly indicates success (as fallback only 
-        // when both status fields are present and consistent).
-        // ============================================================
+        // Require BOTH api status AND transaction status (strict).
         const apiOk = (apiStatus === 1 || apiStatus === '1');
         const txOk = (txStatus === 1 || txStatus === '1');
-        const messageOk = messageStr.includes('successful') || messageStr.includes('success');
-
-        // Require at least api status OR tx status to be explicitly successful
-        // AND the message must not indicate failure
-        const isSuccess = (apiOk || txOk) && !messageStr.includes('fail') && !messageStr.includes('error');
+        const isSuccess = apiOk && txOk && !messageStr.includes('fail') && !messageStr.includes('error');
 
         if (isSuccess) {
             console.log(`[Callback] Payment SUCCESS for Order ${merchantOrderRef}`);
 
-            // Check if order exists
             const { data: existingOrder, error: fetchError } = await supabaseAdmin
                 .from('orders')
-                .select('id, order_number, payment_status, total')
+                .select('id, order_number, payment_status, total, metadata')
                 .eq('order_number', merchantOrderRef)
                 .single();
 
@@ -138,28 +120,32 @@ export async function POST(req: Request) {
                 return NextResponse.json({ success: false, message: 'Order not found' }, { status: 404 });
             }
 
-            // Already paid - idempotent
             if (existingOrder.payment_status === 'paid') {
                 console.log('[Callback] Order already paid, skipping:', merchantOrderRef);
                 return NextResponse.json({ success: true, message: 'Order already processed' });
             }
 
-            // ============================================================
-            // SECURITY: Verify amount matches — REJECT if mismatch
-            // ============================================================
-            const callbackAmount = data.amount ? parseFloat(data.amount) : (body.amount ? parseFloat(body.amount) : null);
-            if (callbackAmount !== null) {
-                const expectedAmount = Number(existingOrder.total);
-                if (Math.abs(callbackAmount - expectedAmount) > 0.01) {
-                    console.error('[Callback] AMOUNT MISMATCH — REJECTING! Expected:', expectedAmount, 'Got:', callbackAmount, 'Order:', merchantOrderRef);
-                    return NextResponse.json({
-                        success: false,
-                        message: 'Payment amount does not match order total'
-                    }, { status: 400 });
-                }
+            const callbackAmount = data.amount != null
+                ? parseFloat(data.amount)
+                : (body.amount != null ? parseFloat(body.amount) : null);
+
+            if (callbackAmount === null || Number.isNaN(callbackAmount)) {
+                console.error('[Callback] Missing amount — REJECTING');
+                return NextResponse.json({
+                    success: false,
+                    message: 'Payment amount missing from callback'
+                }, { status: 400 });
             }
 
-            // Mark order as paid via RPC
+            const expectedAmount = Number(existingOrder.total);
+            if (Math.abs(callbackAmount - expectedAmount) > 0.01) {
+                console.error('[Callback] AMOUNT MISMATCH — REJECTING! Expected:', expectedAmount, 'Got:', callbackAmount);
+                return NextResponse.json({
+                    success: false,
+                    message: 'Payment amount does not match order total'
+                }, { status: 400 });
+            }
+
             const { data: orderJson, error: updateError } = await supabaseAdmin
                 .rpc('mark_order_paid', {
                     order_ref: merchantOrderRef,
@@ -178,7 +164,6 @@ export async function POST(req: Request) {
 
             console.log('[Callback] Order updated! ID:', orderJson.id, '| Status:', orderJson.status);
 
-            // Update customer stats
             try {
                 if (orderJson.email) {
                     await supabaseAdmin.rpc('update_customer_stats', {
@@ -190,11 +175,9 @@ export async function POST(req: Request) {
                 console.error('[Callback] Customer stats failed:', statsError.message);
             }
 
-            // Send SMS + Email notifications
+            // Notifications are best-effort and deduped inside sendOrderConfirmation.
             try {
-                console.log('[Callback] Sending notifications for:', orderJson.order_number);
                 await sendOrderConfirmation(orderJson);
-                console.log('[Callback] Notifications sent!');
             } catch (notifyError: any) {
                 console.error('[Callback] Notification failed:', notifyError.message);
             }
@@ -202,16 +185,32 @@ export async function POST(req: Request) {
             return NextResponse.json({ success: true, message: 'Payment verified and Order Updated' });
 
         } else {
-            // Payment failed
             console.log(`[Callback] Payment FAILED for ${merchantOrderRef} | Status: ${apiStatus} | TX: ${txStatus}`);
+
+            const { data: existingOrder } = await supabaseAdmin
+                .from('orders')
+                .select('id, payment_status, metadata')
+                .eq('order_number', merchantOrderRef)
+                .maybeSingle();
+
+            // Never overwrite a successful payment with a delayed failure.
+            if (existingOrder?.payment_status === 'paid') {
+                return NextResponse.json({ success: true, message: 'Order already paid' });
+            }
+
+            const prevMeta = (existingOrder?.metadata && typeof existingOrder.metadata === 'object')
+                ? existingOrder.metadata
+                : {};
 
             await supabaseAdmin
                 .from('orders')
                 .update({
                     payment_status: 'failed',
                     metadata: {
+                        ...prevMeta,
                         moolre_reference: moolreReference,
-                        failure_reason: body.message || 'Payment failed'
+                        failure_reason: body.message || 'Payment failed',
+                        last_callback_at: new Date().toISOString(),
                     }
                 })
                 .eq('order_number', merchantOrderRef);
@@ -225,6 +224,6 @@ export async function POST(req: Request) {
     }
 }
 
-export async function GET(req: Request) {
+export async function GET() {
     return NextResponse.json({ message: 'Moolre callback endpoint ready', timestamp: new Date().toISOString() });
 }

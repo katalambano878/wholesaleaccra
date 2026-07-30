@@ -85,19 +85,23 @@ function ShopContent() {
               query = query.ilike('name', `%${search}%`);
             }
 
-            // Category Filter with Subcategories
+            // Category filter via category_id (plain-PG compat does not support
+            // PostgREST dotted embed filters like categories.slug).
             if (selectedCategory !== 'all') {
               const categoryObj = categories.find(c => c.slug === selectedCategory);
 
               if (categoryObj) {
-                const targetSlugs = [selectedCategory];
-                const childSlugs = categories
-                  .filter(c => c.parent_id === categoryObj.id)
-                  .map(c => c.slug);
-                targetSlugs.push(...childSlugs);
-                query = query.in('categories.slug', targetSlugs);
-              } else {
-                query = query.eq('categories.slug', selectedCategory);
+                const targetIds = [
+                  categoryObj.id,
+                  ...categories
+                    .filter(c => c.parent_id === categoryObj.id)
+                    .map(c => c.id),
+                ].filter(Boolean);
+                if (targetIds.length === 1) {
+                  query = query.eq('category_id', targetIds[0]);
+                } else if (targetIds.length > 1) {
+                  query = query.in('category_id', targetIds);
+                }
               }
             }
 
