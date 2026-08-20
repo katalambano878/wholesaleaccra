@@ -2,12 +2,15 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import PageHero from '@/components/PageHero';
 
-export const revalidate = 0; // Ensure fresh data on every visit
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 export default async function CategoriesPage() {
-  const { data: categoriesData } = await supabase
-    .from('categories')
-    .select(`
+  let categoriesData: any[] | null = null;
+  try {
+    const { data } = await supabase
+      .from('categories')
+      .select(`
       id,
       name,
       slug,
@@ -15,8 +18,12 @@ export default async function CategoriesPage() {
       image_url,
       position
     `)
-    .eq('status', 'active')
-    .order('position', { ascending: true });
+      .eq('status', 'active')
+      .order('position', { ascending: true });
+    categoriesData = data;
+  } catch {
+    categoriesData = null;
+  }
 
   // Palette to cycle through for visual variety since DB doesn't have colors
   const palette = [
