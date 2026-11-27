@@ -91,9 +91,9 @@ export const REST_GUARD: GuardConfig = {
     reviews: { insert: "user", ownerColumn: "user_id" },
   },
   protectedColumns: {
-    // orders.status and payment_status have no column default here, so the
-    // checkout's own "pending" values must pass; the rest is server-set.
-    orders: ["payment_transaction_id", "payment_reminder_sent", "payment_reminder_sent_at"],
+    // orders.status and payment_status default to 'pending' in the database
+    // (since 2026-11-27), so a guest can no longer insert an order marked paid.
+    orders: ["status", "payment_status", "payment_transaction_id", "payment_reminder_sent", "payment_reminder_sent_at"],
     reviews: ["verified_purchase", "helpful_votes"],
   },
   childWrite: { maxAgeMinutes: 120, unpaidSql: "COALESCE(payment_status::text, 'pending') <> 'paid'" },
